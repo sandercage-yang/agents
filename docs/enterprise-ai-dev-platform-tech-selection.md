@@ -96,6 +96,7 @@
 
 | 项目 | GitHub Stars | 技术栈 | SDK/API | 沙箱 | LangChain 集成 | 多Agent | 企业级 | 许可证 |
 |------|-------------|--------|---------|------|---------------|---------|--------|--------|
+| **OpenCode** | **140k** | TypeScript | ✅ Python SDK + REST API | ✅ Docker | ⭐⭐⭐ 需封装(REST/SDK) | ❌ 单Agent | ⭐⭐⭐⭐ SSO/网关 | MIT |
 | **Open SWE** | 9.2k | Python/LangGraph | ✅ LangGraph 原生 | ✅ Modal/Daytona/Runloop | ⭐⭐⭐⭐⭐ 原生 | ✅ Deep Agents | ⭐⭐⭐ 快速成长 | MIT |
 | **OpenHands** | 50k+ | Python | ✅ Software Agent SDK | ✅ Docker/K8s | ⭐⭐⭐ 需适配(MCP) | ✅ 多Agent委派 | ⭐⭐⭐⭐⭐ 成熟 | MIT |
 | **SWE-Agent** | 16k+ | Python | ⚠️ CLI 为主 | ✅ Docker | ⭐⭐ 需大量封装 | ❌ 单Agent | ⭐⭐ 研究导向 | MIT |
@@ -104,6 +105,51 @@
 | **MetaGPT** | 45k+ | Python | ✅ Python SDK | ⚠️ 有限 | ⭐⭐ 需适配 | ✅ 角色模拟 | ⭐⭐⭐ 中等 | MIT |
 
 ### 3.2 重点候选详细分析
+
+#### 📊 重要候选：OpenCode (anomalyco/opencode)
+
+**项目概况**：
+- 2026 年最热门的开源 Coding Agent，140k GitHub Stars，社区极其活跃
+- 由 Anomaly 团队维护，TypeScript 构建，客户端/服务端架构
+- 提供 TUI（终端界面）、桌面应用、IDE 扩展、Web 界面多种交互方式
+- 支持 75+ LLM 提供商，含本地模型（Ollama/llama.cpp）
+- 拥有官方 Python SDK（`opencode-ai`）和完整的 REST API
+
+**核心能力**：
+
+1. **Headless Server 模式 (`opencode serve`)**：启动无头 HTTP 服务器（OpenAPI 3.1 规范），暴露会话管理、消息发送、文件操作等完整 API，可被外部系统编程调用。
+
+2. **Python SDK (`opencode-ai`)**：提供同步/异步客户端（基于 httpx），支持会话创建、消息发送、Shell 命令执行、文件操作等完整功能。
+
+3. **非交互模式 (`opencode run`)**：支持一次性执行任务后退出，适合集成到 CI/CD 流水线和自动化脚本。
+
+4. **Docker 沙箱**：通过 Docker Desktop 集成实现隔离执行环境。
+
+5. **MCP 协议支持**：可通过 Model Context Protocol 扩展工具集。
+
+6. **企业版特性**：SSO 集成、内部 AI 网关路由、集中配置管理、数据隐私保障。
+
+7. **Agent Client Protocol (ACP)**：支持 stdin/stdout nd-JSON 通信，便于嵌入式集成。
+
+**为什么没有作为首选推荐**：
+
+尽管 OpenCode 是目前社区最火爆的 Coding Agent，但在你的具体场景下存在几个关键局限：
+
+1. **与 LangChain 非原生集成**：OpenCode 是 TypeScript 生态的独立产品，与 LangChain/LangGraph 之间需要通过 REST API 或 Python SDK 进行跨进程桥接。无法像 Open SWE 那样作为 LangGraph SubGraph 共享状态和 Interrupt 机制。
+
+2. **单 Agent 架构**：OpenCode 是一个专注的单 Coding Agent，缺少 Open SWE 的 Planner → Programmer → Reviewer 多阶段编排。需要在你的 MainAgent 层面自行实现"先规划→再编码→再审查"的分阶段逻辑。
+
+3. **Headless 模式成熟度**：`opencode serve` 的 Headless 模式虽然功能完善，但社区反馈在高度自动化场景（如 K8s Pod 中的权限管理、复杂批处理）中仍有一些边界问题需要处理。
+
+4. **定位差异**：OpenCode 的核心定位是**开发者终端工具**（类似 Claude Code 的开源替代），而非**可编程的编码引擎**。它的 API/SDK 更多是为外部控制 TUI 会话设计的，而非作为编排系统的子组件。
+
+**但 OpenCode 在以下场景极具价值**：
+- 作为**开发者日常编码助手**：团队成员在终端中直接使用 OpenCode 进行日常开发
+- 作为**CI/CD 流水线中的审查工具**：通过 `opencode run` 对 PR 进行自动化 Code Review
+- 作为**轻量级集成选项**：如果你的平台只需要简单的"发送 Prompt → 获取代码结果"模式，OpenCode 的 REST API 足够胜任
+- **成本优势**：免费开源 + BYOM（Bring Your Own Model），无额外订阅费
+
+---
 
 #### 🥇 首选推荐：Open SWE (langchain-ai/open-swe)
 
@@ -504,20 +550,135 @@ tools = [
 
 ---
 
+#### 方案 C（补充）：OpenCode Headless Server 封装为 LangChain Tool
+
+OpenCode 凭借 140k stars 的社区热度和成熟的 Headless Server 架构，也是一个值得认真考虑的选项，特别是当你希望利用其庞大的社区生态和模型灵活性时。
+
+```python
+"""
+方案C — 将 OpenCode Headless Server 封装为 LangChain Tool
+OpenCode 通过 REST API (opencode serve) 或 Python SDK (opencode-ai) 进行编程调用
+"""
+import os
+import httpx
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+
+
+class OpenCodeTaskInput(BaseModel):
+    task_description: str = Field(description="编码任务描述")
+    repo_path: str = Field(description="本地代码仓库路径")
+
+
+# ─── 方式一：通过 OpenCode Python SDK 集成 ───
+
+@tool(args_schema=OpenCodeTaskInput)
+async def opencode_sdk_tool(task_description: str, repo_path: str) -> dict:
+    """
+    通过 OpenCode Python SDK 调用 Coding Agent 完成编码任务。
+    需要预先启动 opencode serve 服务。
+    """
+    from opencode import AsyncOpenCode
+
+    client = AsyncOpenCode(
+        base_url="http://localhost:4096",
+        username="opencode",
+        password=os.environ.get("OPENCODE_SERVER_PASSWORD", ""),
+    )
+
+    session = await client.sessions.create()
+
+    result = await client.sessions.message(
+        session_id=session.id,
+        content=task_description,
+    )
+
+    return {
+        "status": "completed",
+        "output": result.content,
+        "session_id": session.id,
+    }
+
+
+# ─── 方式二：通过 REST API + SSE 直接集成 ───
+
+@tool(args_schema=OpenCodeTaskInput)
+async def opencode_api_tool(task_description: str, repo_path: str) -> dict:
+    """
+    通过 OpenCode REST API 调用 Coding Agent。
+    适用于不想引入额外 SDK 依赖的场景。
+    """
+    base_url = "http://localhost:4096"
+
+    async with httpx.AsyncClient(timeout=300) as http:
+        session_resp = await http.post(f"{base_url}/session")
+        session_id = session_resp.json()["id"]
+
+        msg_resp = await http.post(
+            f"{base_url}/session/{session_id}/message",
+            json={"content": task_description},
+        )
+
+        async with http.stream(
+            "GET", f"{base_url}/event",
+            params={"session_id": session_id}
+        ) as stream:
+            final_output = ""
+            async for line in stream.aiter_lines():
+                if '"type":"message.completed"' in line:
+                    final_output = line
+                    break
+
+    return {
+        "status": "completed",
+        "output": final_output,
+        "session_id": session_id,
+    }
+
+
+# ─── 方式三：通过 CLI 非交互模式（最简方案）───
+
+@tool(args_schema=OpenCodeTaskInput)
+async def opencode_cli_tool(task_description: str, repo_path: str) -> dict:
+    """
+    通过 opencode run 命令行非交互模式执行编码任务。
+    最简单的集成方式，适合 PoC 验证。
+    """
+    import asyncio
+
+    proc = await asyncio.create_subprocess_exec(
+        "opencode", "run", task_description,
+        cwd=repo_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+
+    return {
+        "status": "completed" if proc.returncode == 0 else "failed",
+        "output": stdout.decode(),
+        "error": stderr.decode() if proc.returncode != 0 else None,
+    }
+```
+
+---
+
 ## 五、方案对比决策矩阵
 
-| 评估维度 | 方案A: Open SWE (SubGraph) | 方案B: OpenHands (Tool) | 说明 |
-|----------|---------------------------|------------------------|------|
-| **LangChain 集成度** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Open SWE 同属 LangChain 生态 |
-| **状态管理** | ⭐⭐⭐⭐⭐ 共享 StateGraph | ⭐⭐⭐ 跨进程通信 | SubGraph 可直接共享状态 |
-| **Human-in-the-Loop** | ⭐⭐⭐⭐⭐ LangGraph Interrupt | ⭐⭐⭐⭐ 事件驱动 | Interrupt 机制更优雅 |
-| **可观测性** | ⭐⭐⭐⭐⭐ LangSmith 全链路 | ⭐⭐⭐⭐ 需额外配置 | LangSmith 天然覆盖 SubGraph |
-| **编码能力** | ⭐⭐⭐⭐ 优秀 | ⭐⭐⭐⭐⭐ 最强 | OpenHands 在 SWE-bench 上表现更稳定 |
-| **企业治理成熟度** | ⭐⭐⭐ 成长中 | ⭐⭐⭐⭐⭐ 成熟 | OpenHands 有完整的 RBAC/审计 |
-| **沙箱成熟度** | ⭐⭐⭐⭐ 云沙箱 | ⭐⭐⭐⭐⭐ Docker 成熟方案 | Docker 方案更经过生产验证 |
-| **部署复杂度** | ⭐⭐⭐ 需 LangGraph Platform | ⭐⭐⭐⭐ pip install | OpenHands 独立部署更简单 |
-| **内网部署** | ⭐⭐⭐ 需自建沙箱 | ⭐⭐⭐⭐⭐ 原生支持 | OpenHands 的 air-gapped 方案更成熟 |
-| **社区生态** | ⭐⭐⭐ 9.2k stars | ⭐⭐⭐⭐⭐ 50k+ stars | OpenHands 社区更活跃 |
+| 评估维度 | 方案A: Open SWE (SubGraph) | 方案B: OpenHands (Tool) | 方案C: OpenCode (REST/SDK) | 说明 |
+|----------|---------------------------|------------------------|---------------------------|------|
+| **LangChain 集成度** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | Open SWE 同属 LangChain 生态 |
+| **状态管理** | ⭐⭐⭐⭐⭐ 共享 StateGraph | ⭐⭐⭐ 跨进程通信 | ⭐⭐⭐ 跨进程通信 | SubGraph 可直接共享状态 |
+| **Human-in-the-Loop** | ⭐⭐⭐⭐⭐ LangGraph Interrupt | ⭐⭐⭐⭐ 事件驱动 | ⭐⭐⭐ 需自行实现 | OpenCode 的 SSE 事件可监听但需封装 |
+| **可观测性** | ⭐⭐⭐⭐⭐ LangSmith 全链路 | ⭐⭐⭐⭐ 需额外配置 | ⭐⭐⭐ 需额外配置 | LangSmith 天然覆盖 SubGraph |
+| **编码能力** | ⭐⭐⭐⭐ 优秀 | ⭐⭐⭐⭐⭐ 最强 | ⭐⭐⭐⭐ 取决于底层模型 | OpenCode 本身是模型无关的，能力取决于所选 LLM |
+| **企业治理成熟度** | ⭐⭐⭐ 成长中 | ⭐⭐⭐⭐⭐ 成熟 | ⭐⭐⭐⭐ SSO/网关/集中配置 | OpenCode Enterprise 提供 SSO 和内部网关 |
+| **沙箱成熟度** | ⭐⭐⭐⭐ 云沙箱 | ⭐⭐⭐⭐⭐ Docker 成熟方案 | ⭐⭐⭐ Docker Desktop 集成 | OpenCode 沙箱方案仍在发展中 |
+| **部署复杂度** | ⭐⭐⭐ 需 LangGraph Platform | ⭐⭐⭐⭐ pip install | ⭐⭐⭐⭐⭐ brew/npm install | OpenCode 安装最简单 |
+| **内网部署** | ⭐⭐⭐ 需自建沙箱 | ⭐⭐⭐⭐⭐ 原生支持 | ⭐⭐⭐⭐ 支持内部网关路由 | OpenCode 可配置仅走内部 AI 网关 |
+| **社区生态** | ⭐⭐⭐ 9.2k stars | ⭐⭐⭐⭐ 50k+ stars | ⭐⭐⭐⭐⭐ 140k stars | OpenCode 社区最活跃 |
+| **模型灵活性** | ⭐⭐⭐⭐ 多模型支持 | ⭐⭐⭐⭐⭐ 75+ 提供商 | ⭐⭐⭐⭐⭐ 75+ 提供商 + 本地模型 | OpenCode/OpenHands 模型支持最广 |
+| **多阶段编排** | ⭐⭐⭐⭐⭐ 内置 Plan→Code→Review | ⭐⭐⭐⭐ 多Agent委派 | ⭐⭐⭐ Plan/Build 两模式 | Open SWE 的多阶段最成熟 |
 
 ### 最终推荐
 
@@ -527,11 +688,18 @@ tools = [
 | **需要最强编码能力和企业治理** | 方案B: OpenHands | SWE-bench 最强、RBAC/审计成熟 |
 | **内网隔离部署、强合规要求** | 方案B: OpenHands | Air-gapped 部署方案成熟 |
 | **快速验证 PoC** | 方案A: Open SWE | 集成代码量最少，上手最快 |
+| **最大社区支持 + 模型灵活性 + 低成本** | 方案C: OpenCode | 140k stars 社区、BYOM 零订阅费 |
+| **需要同时兼顾开发者日常工具** | 方案C: OpenCode | 团队可直接使用 TUI/桌面端日常编码 |
 
-> **综合建议**：对于你的场景（Python + LangChain 技术栈，需要与 MainAgent 紧密协作），**推荐 Open SWE 作为首选方案**启动 PoC。同时保留 OpenHands 作为备选，在以下情况切换：
-> - PoC 阶段发现 Open SWE 的编码质量不满足要求
-> - 生产阶段需要更强的企业治理和合规能力
-> - 需要纯内网 air-gapped 部署
+> **综合建议**：对于你的场景（Python + LangChain 技术栈，需要与 MainAgent 紧密协作），**推荐 Open SWE 作为首选方案**启动 PoC。同时保留 OpenHands 和 OpenCode 作为备选：
+>
+> - **OpenHands**：当需要更强的企业治理（RBAC、审计）或纯内网 air-gapped 部署时切换
+> - **OpenCode**：当需要最大的模型灵活性、最低的集成门槛、或希望团队成员也能直接使用终端 Agent 日常编码时引入
+>
+> 实际上，三者并不互斥。一种务实的策略是：
+> 1. **平台编排层**用 Open SWE 作为 LangGraph SubAgent（与 MainAgent 紧密耦合）
+> 2. **CI/CD 审查层**用 OpenCode `run` 模式做自动化 Code Review
+> 3. **开发者日常**用 OpenCode TUI/桌面端作为团队统一的 AI 编码助手
 
 ---
 
@@ -624,6 +792,12 @@ asyncio.run(run_full_lifecycle("开发一个用户认证微服务，支持 OAuth
 
 | 资源 | 链接 |
 |------|------|
+| OpenCode 官网 | https://opencode.ai/ |
+| OpenCode GitHub | https://github.com/anomalyco/opencode |
+| OpenCode Python SDK | https://github.com/anomalyco/opencode-sdk-python |
+| OpenCode SDK 文档 | https://opencode.ai/docs/sdk/ |
+| OpenCode Enterprise 文档 | https://opencode.ai/docs/enterprise/ |
+| OpenCode Headless Server 文档 | https://opencode.ai/docs/server/ |
 | Open SWE GitHub | https://github.com/langchain-ai/open-swe |
 | Open SWE 官方博客 | https://blog.langchain.com/open-swe-an-open-source-framework-for-internal-coding-agents/ |
 | Deep Agents 框架 | https://github.com/langchain-ai/deepagents |
